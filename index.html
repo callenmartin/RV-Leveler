@@ -1,0 +1,1313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="theme-color" content="#1a1a2e">
+  <link rel="manifest" href="manifest.json">
+  <title>RV Leveler</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    :root {
+      --bg:       #1a1a2e;
+      --surface:  #16213e;
+      --card:     #0f3460;
+      --green:    #00d084;
+      --yellow:   #ffd700;
+      --text:     #eaeaea;
+      --text-dim: #8892a4;
+      --border:   #2a2a4a;
+      --red:      #e94560;
+      --orange:   #ff8c00;
+      --blue:     #4a9eff;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      overflow-x: hidden;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      padding: 12px;
+      gap: 10px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: var(--surface);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+
+    .header h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .signal-bars {
+      display: none;
+      gap: 5px;
+      align-items: center;
+    }
+
+    .signal-bars.show { display: flex; }
+
+    .signal-circle {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--border);
+      border: 2px solid var(--border);
+      transition: background 0.4s, border-color 0.4s;
+      flex-shrink: 0;
+    }
+
+    .signal-circle.lit-green  { background: var(--green);  border-color: var(--green); }
+    .signal-circle.lit-yellow { background: var(--yellow); border-color: var(--yellow); }
+    .signal-circle.lit-red    { background: var(--red);    border-color: var(--red); }
+
+    .connection-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      transition: background 0.3s;
+    }
+
+    .dot.connected    { background: var(--green); }
+    .dot.disconnected { background: var(--red); }
+
+    .connect-btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 1px;
+    }
+
+    .connect-btn.disconnected {
+      background: var(--card);
+      color: var(--green);
+      border: 2px solid var(--green);
+    }
+
+    .connect-btn.connected {
+      background: var(--surface);
+      color: var(--red);
+      border: 2px solid var(--red);
+    }
+
+    .connect-btn:active { transform: scale(0.97); }
+
+    .disconnected-banner {
+      display: none;
+      background: var(--red);
+      color: white;
+      text-align: center;
+      padding: 8px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 0.85rem;
+      letter-spacing: 1px;
+      animation: pulse 1.5s infinite;
+    }
+
+    .disconnected-banner.show { display: block; }
+
+    .stale-banner {
+      display: none;
+      background: var(--orange);
+      color: white;
+      text-align: center;
+      padding: 8px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 0.85rem;
+      letter-spacing: 1px;
+      animation: pulse 1.5s infinite;
+    }
+
+    .stale-banner.show { display: block; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.6; }
+    }
+
+    .status-card {
+      padding: 18px;
+      border-radius: 14px;
+      text-align: center;
+      background: var(--surface);
+      border: 2px solid var(--border);
+      transition: all 0.4s;
+    }
+
+    .status-card.level  { background: rgba(0,208,132,0.15); border-color: var(--green); }
+    .status-card.needed { background: rgba(233,69,96,0.1);  border-color: var(--red); }
+    .status-card.disconnected-state { opacity: 0.5; }
+
+    .status-label {
+      font-size: 0.75rem;
+      letter-spacing: 2px;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+
+    .status-text {
+      font-size: 1.6rem;
+      font-weight: 900;
+      letter-spacing: 2px;
+      color: var(--text);
+      transition: color 0.3s;
+    }
+
+    .status-text.level  { color: var(--green); }
+    .status-text.needed { color: var(--red); }
+
+    .level-flash {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,208,132,0.25);
+      z-index: 999;
+      pointer-events: none;
+      animation: flashAnim 1.2s ease-out forwards;
+    }
+
+    .level-flash.show { display: block; }
+
+    @keyframes flashAnim {
+      0%   { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    .side-row {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .side-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 10px;
+      text-align: center;
+      transition: all 0.3s;
+    }
+
+    .side-card.raise       { border-color: var(--orange); background: rgba(255,140,0,0.08); }
+    .side-card.lower       { border-color: var(--card);   background: rgba(15,52,96,0.5); }
+    .side-card.level-state { border-color: var(--green);  background: rgba(0,208,132,0.08); }
+    .side-card.disconnected-state { opacity: 0.45; }
+
+    .side-name {
+      font-size: 0.7rem;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      margin-bottom: 2px;
+    }
+
+    .side-sub {
+      font-size: 0.65rem;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+      opacity: 0.7;
+    }
+
+    .side-action {
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+    }
+
+    .side-action.raise { color: var(--orange); }
+    .side-action.lower { color: var(--text-dim); }
+    .side-action.level { color: var(--green); }
+
+    .side-inches {
+      font-size: 1.8rem;
+      font-weight: 900;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    .side-inches.level { color: var(--green); }
+
+    .or-divider {
+      text-align: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text-dim);
+      letter-spacing: 2px;
+    }
+
+    .fb-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all 0.3s;
+    }
+
+    .fb-card.raise       { border-color: var(--orange); background: rgba(255,140,0,0.08); }
+    .fb-card.lower       { border-color: var(--card);   background: rgba(15,52,96,0.5); }
+    .fb-card.level-state { border-color: var(--green);  background: rgba(0,208,132,0.08); }
+    .fb-card.disconnected-state { opacity: 0.45; }
+
+    .fb-label {
+      font-size: 0.7rem;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+
+    .fb-action {
+      font-size: 1rem;
+      font-weight: 800;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .fb-action.raise { color: var(--orange); }
+    .fb-action.lower { color: var(--text-dim); }
+    .fb-action.level { color: var(--green); }
+
+    .fb-inches {
+      font-size: 2rem;
+      font-weight: 900;
+      color: var(--text);
+    }
+
+    .fb-inches.level { color: var(--green); }
+
+    .cal-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 14px;
+    }
+
+    .cal-label {
+      font-size: 0.65rem;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      margin-bottom: 2px;
+    }
+
+    .cal-value {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .cal-date {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      margin-top: 1px;
+    }
+
+    .saving-indicator {
+      display: none;
+      text-align: center;
+      padding: 12px;
+      background: rgba(0,208,132,0.1);
+      border: 1px solid var(--green);
+      border-radius: 10px;
+      color: var(--green);
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 1px;
+    }
+
+    .saving-indicator.show { display: block; }
+
+    /* ── Button Row — Calibrate and Sleep side by side ─────── */
+    .button-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .calibrate-btn {
+      padding: 14px;
+      border: 2px solid var(--yellow);
+      border-radius: 12px;
+      background: rgba(255,215,0,0.08);
+      color: var(--yellow);
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .sleep-btn {
+      padding: 14px;
+      border: 2px solid var(--blue);
+      border-radius: 12px;
+      background: rgba(74,158,255,0.08);
+      color: var(--blue);
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .calibrate-btn:active { transform: scale(0.97); }
+    .sleep-btn:active     { transform: scale(0.97); }
+
+    .calibrate-btn:disabled,
+    .sleep-btn:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+
+    /* ── Modals ─────────────────────────────────────────────── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .modal-overlay.show { display: flex; }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      max-width: 340px;
+      width: 100%;
+      text-align: center;
+    }
+
+    .modal-icon { font-size: 2.5rem; margin-bottom: 12px; }
+
+    .modal h2 {
+      font-size: 1.1rem;
+      margin-bottom: 10px;
+      color: var(--yellow);
+    }
+
+    .modal h2.sleep-title { color: var(--blue); }
+
+    .modal p {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      line-height: 1.5;
+      margin-bottom: 20px;
+    }
+
+    .modal-buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .modal-btn {
+      padding: 12px;
+      border-radius: 10px;
+      border: none;
+      font-size: 0.85rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .modal-btn:active  { transform: scale(0.97); }
+    .modal-btn.cancel  { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); }
+    .modal-btn.confirm { background: var(--yellow); color: #1a1a2e; }
+    .modal-btn.danger  { background: var(--red); color: white; }
+    .modal-btn.sleep   { background: var(--blue); color: white; }
+    .modal-btn.full    { grid-column: 1 / -1; }
+
+    .help-btn {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--text-dim);
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .help-btn:active { transform: scale(0.97); }
+
+    /* ── Help Modal ─────────────────────────────────────────── */
+    .help-modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      max-width: 340px;
+      width: 100%;
+      max-height: 85vh;
+      overflow-y: auto;
+      text-align: left;
+    }
+
+    .help-modal h2 {
+      font-size: 1rem;
+      color: var(--green);
+      margin-bottom: 16px;
+      text-align: center;
+      letter-spacing: 1px;
+    }
+
+    .help-section {
+      margin-bottom: 16px;
+    }
+
+    .help-section h3 {
+      font-size: 0.75rem;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    .help-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 4px 0;
+      border-bottom: 1px solid var(--border);
+      gap: 10px;
+    }
+
+    .help-row:last-child { border-bottom: none; }
+
+    .help-label {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    .help-value {
+      font-size: 0.78rem;
+      color: var(--text);
+      font-weight: 600;
+      text-align: right;
+    }
+
+    .help-note {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      line-height: 1.5;
+      margin-top: 4px;
+    }
+
+    .forget-btn {
+      width: 100%;
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid var(--red);
+      border-radius: 10px;
+      background: rgba(233,69,96,0.08);
+      color: var(--red);
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .forget-btn:active { transform: scale(0.97); }
+  </style>
+</head>
+<body>
+
+  <div class="level-flash" id="levelFlash"></div>
+
+  <div class="header">
+    <h1>RV LEVELER</h1>
+    <div class="header-right">
+      <div class="signal-bars" id="signalBars">
+        <div class="signal-circle" id="sig1"></div>
+        <div class="signal-circle" id="sig2"></div>
+        <div class="signal-circle" id="sig3"></div>
+        <div class="signal-circle" id="sig4"></div>
+      </div>
+      <div class="connection-status">
+        <span id="connText">Disconnected</span>
+      </div>
+    </div>
+  </div>
+
+  <button class="connect-btn disconnected" id="connectBtn" onclick="toggleConnection()">
+    CONNECT TO RV-LEVELER
+  </button>
+
+  <div class="disconnected-banner" id="discBanner">
+    CONNECTION LOST — LAST KNOWN VALUES
+  </div>
+
+  <div class="stale-banner" id="staleBanner">
+    SIGNAL WEAK — DATA MAY BE STALE
+  </div>
+
+  <div class="status-card" id="statusCard">
+    <div class="status-label">OVERALL STATUS</div>
+    <div class="status-text" id="statusText">--</div>
+  </div>
+
+  <div class="side-row">
+    <div class="side-card" id="leftCard">
+      <div class="side-name">LEFT</div>
+      <div class="side-sub">(Driver)</div>
+      <div class="side-action" id="leftAction">--</div>
+      <div class="side-inches" id="leftInches">--</div>
+    </div>
+    <div class="or-divider">OR</div>
+    <div class="side-card" id="rightCard">
+      <div class="side-name">RIGHT</div>
+      <div class="side-sub">(Passenger)</div>
+      <div class="side-action" id="rightAction">--</div>
+      <div class="side-inches" id="rightInches">--</div>
+    </div>
+  </div>
+
+  <div class="fb-card" id="fbCard">
+    <div>
+      <div class="fb-label">FRONT / BACK</div>
+      <div class="fb-action" id="fbAction">--</div>
+    </div>
+    <div class="fb-inches" id="fbInches">--</div>
+  </div>
+
+  <div class="cal-card">
+    <div class="cal-label">CALIBRATION</div>
+    <div class="cal-value" id="calValue">--</div>
+    <div class="cal-date"  id="calDate"></div>
+  </div>
+
+  <div class="saving-indicator" id="savingIndicator">
+    CALIBRATION SAVED — UPDATING DATE...
+  </div>
+
+  <!-- Calibrate and Sleep buttons side by side -->
+  <div class="button-row">
+    <button class="calibrate-btn" id="calibrateBtn" onclick="startCalibration()" disabled>
+      CALIBRATE
+    </button>
+    <button class="sleep-btn" id="sleepBtn" onclick="startSleep()" disabled>
+      SLEEP
+    </button>
+  </div>
+
+  <!-- Help button -->
+  <button class="help-btn" onclick="showHelp()">ℹ️ HOW IT WORKS</button>
+
+  <!-- Calibrate Modal 1 -->
+  <div class="modal-overlay" id="modal1">
+    <div class="modal">
+      <div class="modal-icon">⚠️</div>
+      <h2>Recalibrate?</h2>
+      <p>Your RV must be <strong>perfectly level</strong> right now.<br><br>This will overwrite your current calibration data.</p>
+      <div class="modal-buttons">
+        <button class="modal-btn cancel"  onclick="closeModals()">Cancel</button>
+        <button class="modal-btn confirm" onclick="showModal2()">Yes I Am Sure</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Calibrate Modal 2 -->
+  <div class="modal-overlay" id="modal2">
+    <div class="modal">
+      <div class="modal-icon">🎯</div>
+      <h2>Last Chance</h2>
+      <p>Is your RV <strong>level right now</strong>?<br><br>Tapping Calibrate Now saves the current position as your level reference.</p>
+      <div class="modal-buttons">
+        <button class="modal-btn cancel" onclick="closeModals()">No — Go Back</button>
+        <button class="modal-btn danger" onclick="doCalibrate()">Calibrate Now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sleep Modal -->
+  <div class="modal-overlay" id="sleepModal">
+    <div class="modal">
+      <div class="modal-icon">😴</div>
+      <h2 class="sleep-title">Sleep Device?</h2>
+      <p>The device will go to deep sleep.<br><br>It will wake automatically when the RV starts moving.</p>
+      <div class="modal-buttons">
+        <button class="modal-btn cancel" onclick="closeModals()">Cancel</button>
+        <button class="modal-btn sleep"  onclick="doSleep()">Sleep Now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Help Modal -->
+  <div class="modal-overlay" id="helpModal">
+    <div class="help-modal">
+      <h2>ℹ️ HOW IT WORKS</h2>
+
+      <div class="help-section">
+        <h3>Signal Strength</h3>
+        <div class="help-row">
+          <span class="help-label">● ● ● ●  all green</span>
+          <span class="help-value">Excellent</span>
+        </div>
+        <div class="help-row">
+          <span class="help-label">● ● ● ○  3 green</span>
+          <span class="help-value">Good</span>
+        </div>
+        <div class="help-row">
+          <span class="help-label">● ● ○ ○  2 yellow</span>
+          <span class="help-value">Weak</span>
+        </div>
+        <div class="help-row">
+          <span class="help-label">● ○ ○ ○  1 red</span>
+          <span class="help-value">Very weak</span>
+        </div>
+        <div class="help-row">
+          <span class="help-label">○ ○ ○ ○  all grey</span>
+          <span class="help-value">No data</span>
+        </div>
+        <p class="help-note" style="margin-top:6px">Circles appear in the header when connected. Based on how frequently data is arriving — updates every notification packet.</p>
+      </div>
+
+      <div class="help-section">
+        <h3>Sleep Timers</h3>
+        <div class="help-row">
+          <span class="help-label">Phone disconnects</span>
+          <span class="help-value">Sleep in 10 min</span>
+        </div>
+        <div class="help-row">
+          <span class="help-label">SLEEP button pressed</span>
+          <span class="help-value">Sleep in 4 days</span>
+        </div>
+        <div class="help-row">
+          <span class="help-label">Motion — no phone</span>
+          <span class="help-value">Sleep in 20 min</span>
+        </div>
+        <div class="help-row">
+          <span class="help-label">Motion — after phone</span>
+          <span class="help-value">Sleep in 10 min</span>
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h3>Wake Sources</h3>
+        <div class="help-row">
+          <span class="help-label">Timer — normal</span>
+          <span class="help-value">Every 30 min</span>
+        </div>
+        <div class="help-row">
+          <span class="help-label">Timer — after SLEEP btn</span>
+          <span class="help-value">After 4 days</span>
+        </div>
+        <div class="help-row">
+          <span class="help-label">Physical button</span>
+          <span class="help-value">Instant — any time</span>
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h3>While Sleeping</h3>
+        <p class="help-note">Every 30 minutes the device wakes briefly, checks if the RV has moved more than 2°, then goes back to sleep if parked. If movement is detected it stays awake and advertises via BLE so your phone can connect.</p>
+      </div>
+
+      <div class="help-section">
+        <h3>While Awake — No Phone</h3>
+        <p class="help-note">Checks angles every 1 minute. If the RV is still moving the sleep timer keeps resetting — the device stays awake for the entire drive. Once parked and angles stabilize the 20 minute countdown begins.</p>
+      </div>
+
+      <div class="help-section">
+        <h3>Power Use</h3>
+        <div class="help-row">
+          <span class="help-label">Phone connected</span>
+          <span class="help-value">~190mA</span>
+        </div>
+        <div class="help-row">
+          <span class="help-label">Awake — no phone</span>
+          <span class="help-value">~2mA</span>
+        </div>
+        <div class="help-row">
+          <span class="help-label">Deep sleep</span>
+          <span class="help-value">~0.02mA</span>
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h3>Troubleshooting</h3>
+        <p class="help-note">If the device does not appear when scanning press the physical button in the upper cupboard beside the radio on the passenger side to wake it immediately.</p>
+        <p class="help-note" style="margin-top:8px">If the app shows connected but no data is updating tap Disconnect then Connect again.</p>
+      </div>
+
+      <button class="forget-btn" onclick="forgetDevice()">
+        🔄 FORGET DEVICE — RESET BLE
+      </button>
+
+      <div class="modal-buttons" style="margin-top:12px">
+        <button class="modal-btn cancel full" onclick="closeModals()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SERVICE_UUID     = '12345678-1234-1234-1234-123456789abc';
+    const CHAR_ROLL        = '12345678-1234-1234-1234-123456789ab1';
+    const CHAR_PITCH       = '12345678-1234-1234-1234-123456789ab2';
+    const CHAR_LEFT        = '12345678-1234-1234-1234-123456789ab3';
+    const CHAR_RIGHT       = '12345678-1234-1234-1234-123456789ab4';
+    const CHAR_FB          = '12345678-1234-1234-1234-123456789ab5';
+    const CHAR_STATUS      = '12345678-1234-1234-1234-123456789ab6';
+    const CHAR_CAL         = '12345678-1234-1234-1234-123456789ab7';
+    const CHAR_CAL_PENDING = '12345678-1234-1234-1234-123456789ab8';
+    const CHAR_DATETIME    = '12345678-1234-1234-1234-123456789ab9';
+    const CHAR_CALIBRATE   = '12345678-1234-1234-1234-123456789aba';
+    const CHAR_SLEEP       = '12345678-1234-1234-1234-123456789abb';
+
+    let bleDevice = null;
+    let connected = false;
+    let wakeLock  = null;
+    let wasLevel  = false;
+    let chars     = {};
+
+    // Stale data tracking
+    // Shows warning if no new data received for 3 seconds while connected
+    let lastDataTime  = Date.now(); // initialize to now to avoid false trigger
+    let staleTimer    = null;
+    const STALE_MS    = 3000; // 3 seconds without data = signal weak warning
+
+    const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+
+    // ── Page Close / Background Handlers ──────────────────────
+    window.addEventListener('beforeunload', function() {
+      if (bleDevice && bleDevice.gatt.connected) {
+        bleDevice.gatt.disconnect();
+      }
+    });
+
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'hidden') {
+        if (bleDevice && bleDevice.gatt.connected) {
+          bleDevice.gatt.disconnect();
+        }
+      }
+    });
+
+    // ── Wake Lock ──────────────────────────────────────────────
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+          document.addEventListener('visibilitychange', async () => {
+            if (connected && wakeLock !== null &&
+                document.visibilityState === 'visible') {
+              try { wakeLock = await navigator.wakeLock.request('screen'); } catch(e) {}
+            }
+          });
+        }
+      } catch(e) { console.log('Wake lock failed:', e); }
+    }
+
+    function releaseWakeLock() {
+      if (wakeLock) { wakeLock.release(); wakeLock = null; }
+    }
+
+    // ── Stale Data Detection ───────────────────────────────────
+    function resetStaleTimer() {
+      const now = Date.now();
+      const gap = lastDataTime > 0 ? now - lastDataTime : 0;
+      lastDataTime = now;
+      document.getElementById('staleBanner').classList.remove('show');
+      updateSignalStrength(gap);
+    }
+
+    function updateSignalStrength(gapMs) {
+      const circles = [
+        document.getElementById('sig1'),
+        document.getElementById('sig2'),
+        document.getElementById('sig3'),
+        document.getElementById('sig4')
+      ];
+
+      // Clear all lit classes
+      circles.forEach(c => {
+        c.classList.remove('lit-green', 'lit-yellow', 'lit-red');
+      });
+
+      let strength = 0;
+      let color    = 'lit-green';
+
+      if      (gapMs === 0)  { strength = 4; color = 'lit-green'; }
+      else if (gapMs < 750)  { strength = 4; color = 'lit-green'; }
+      else if (gapMs < 1000) { strength = 3; color = 'lit-green'; }
+      else if (gapMs < 2000) { strength = 2; color = 'lit-yellow'; }
+      else if (gapMs < 3000) { strength = 1; color = 'lit-red'; }
+      else                   { strength = 0; }
+
+      for (let i = 0; i < strength; i++) {
+        circles[i].classList.add(color);
+      }
+    }
+
+    function startStaleCheck() {
+      stopStaleCheck();
+      staleTimer = setInterval(() => {
+        if (connected && Date.now() - lastDataTime > STALE_MS) {
+          document.getElementById('staleBanner').classList.add('show');
+          updateSignalStrength(Date.now() - lastDataTime);
+        }
+      }, 500);
+    }
+
+    function stopStaleCheck() {
+      if (staleTimer) { clearInterval(staleTimer); staleTimer = null; }
+      document.getElementById('staleBanner').classList.remove('show');
+      ['sig1','sig2','sig3','sig4'].forEach(id => {
+        const el = document.getElementById(id);
+        el.classList.remove('lit-green', 'lit-yellow', 'lit-red');
+      });
+    }
+
+    // ── Date/Time ──────────────────────────────────────────────
+    function getDateTime() {
+      const now    = new Date();
+      const months = ['Jan','Feb','Mar','Apr','May','Jun',
+                      'Jul','Aug','Sep','Oct','Nov','Dec'];
+      let   hour   = now.getHours();
+      const min    = String(now.getMinutes()).padStart(2, '0');
+      const ampm   = hour >= 12 ? 'PM' : 'AM';
+      hour = hour % 12 || 12;
+      return `${months[now.getMonth()]} ${now.getDate()} ${now.getFullYear()} ${hour}:${min} ${ampm}`;
+    }
+
+    // ── Connection Toggle ──────────────────────────────────────
+    async function toggleConnection() {
+      if (connected) {
+        await doDisconnect();
+      } else {
+        await connect();
+      }
+    }
+
+    // ── Disconnect ─────────────────────────────────────────────
+    async function doDisconnect() {
+      try {
+        if (bleDevice && bleDevice.gatt.connected) {
+          const notifyChars = [
+            chars.left, chars.right, chars.fb,
+            chars.status, chars.cal, chars.calPending
+          ];
+
+          for (const c of notifyChars) {
+            if (c) {
+              try { await c.stopNotifications(); } catch(e) {}
+            }
+          }
+
+          bleDevice.gatt.disconnect();
+          await new Promise(r => setTimeout(r, 500));
+        }
+      } catch(err) {
+        console.log('Disconnect error:', err);
+      }
+
+      onDisconnected();
+    }
+
+    // ── Connect ────────────────────────────────────────────────
+    async function connect() {
+      try {
+        bleDevice = await navigator.bluetooth.requestDevice({
+          filters: [{ name: 'RV-Leveler' }],
+          optionalServices: [SERVICE_UUID]
+        });
+
+        bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+
+        let bleServer;
+        let attempts = 0;
+        while (attempts < 3) {
+          try {
+            bleServer = await bleDevice.gatt.connect();
+            break;
+          } catch(e) {
+            attempts++;
+            if (attempts >= 3) throw e;
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+
+        const bleService = await bleServer.getPrimaryService(SERVICE_UUID);
+        await new Promise(r => setTimeout(r, 500));
+
+        chars.roll       = await bleService.getCharacteristic(CHAR_ROLL);
+        chars.pitch      = await bleService.getCharacteristic(CHAR_PITCH);
+        chars.left       = await bleService.getCharacteristic(CHAR_LEFT);
+        chars.right      = await bleService.getCharacteristic(CHAR_RIGHT);
+        chars.fb         = await bleService.getCharacteristic(CHAR_FB);
+        chars.status     = await bleService.getCharacteristic(CHAR_STATUS);
+        chars.cal        = await bleService.getCharacteristic(CHAR_CAL);
+        chars.calPending = await bleService.getCharacteristic(CHAR_CAL_PENDING);
+        chars.dateTime   = await bleService.getCharacteristic(CHAR_DATETIME);
+        chars.calibrate  = await bleService.getCharacteristic(CHAR_CALIBRATE);
+        chars.sleep      = await bleService.getCharacteristic(CHAR_SLEEP);
+
+        await chars.left.startNotifications();
+        chars.left.addEventListener('characteristicvaluechanged',
+          e => updateSide('left', decoder.decode(e.target.value)));
+
+        await chars.right.startNotifications();
+        chars.right.addEventListener('characteristicvaluechanged',
+          e => updateSide('right', decoder.decode(e.target.value)));
+
+        await chars.fb.startNotifications();
+        chars.fb.addEventListener('characteristicvaluechanged',
+          e => updateFB(decoder.decode(e.target.value)));
+
+        await chars.status.startNotifications();
+        chars.status.addEventListener('characteristicvaluechanged',
+          e => updateStatus(decoder.decode(e.target.value)));
+
+        await chars.cal.startNotifications();
+        chars.cal.addEventListener('characteristicvaluechanged',
+          e => updateCal(decoder.decode(e.target.value)));
+
+        await chars.calPending.startNotifications();
+        chars.calPending.addEventListener('characteristicvaluechanged',
+          e => handleCalPending(decoder.decode(e.target.value)));
+
+        updateSide('left',  decoder.decode(await chars.left.readValue()));
+        updateSide('right', decoder.decode(await chars.right.readValue()));
+        updateFB(           decoder.decode(await chars.fb.readValue()));
+        updateStatus(       decoder.decode(await chars.status.readValue()));
+        updateCal(          decoder.decode(await chars.cal.readValue()));
+        handleCalPending(   decoder.decode(await chars.calPending.readValue()));
+
+        connected = true;
+        setConnectedUI(true);
+        await requestWakeLock();
+        lastDataTime = Date.now();
+        updateSignalStrength(0);  // show 4 green immediately on connect
+        resetStaleTimer();
+        startStaleCheck();
+
+      } catch(e) {
+        console.error('Connect error:', e);
+        if (e.name !== 'NotFoundError') {
+          alert('Connection failed: ' + e.message);
+        }
+      }
+    }
+
+    function onDisconnected() {
+      connected = false;
+      chars     = {};
+      setConnectedUI(false);
+      releaseWakeLock();
+      stopStaleCheck();
+      document.getElementById('signalBars').classList.remove('show');
+      document.getElementById('discBanner').classList.add('show');
+      setCardsDisconnected();
+    }
+
+    // ── UI State ───────────────────────────────────────────────
+    function setConnectedUI(isConnected) {
+      const btn      = document.getElementById('connectBtn');
+      const text     = document.getElementById('connText');
+      const calBtn   = document.getElementById('calibrateBtn');
+      const sleepBtn = document.getElementById('sleepBtn');
+
+      if (isConnected) {
+        btn.textContent   = 'DISCONNECT';
+        btn.className     = 'connect-btn connected';
+        text.textContent  = 'Connected';
+        calBtn.disabled   = false;
+        sleepBtn.disabled = false;
+        document.getElementById('discBanner').classList.remove('show');
+        document.getElementById('staleBanner').classList.remove('show');
+        document.getElementById('signalBars').classList.add('show');
+        clearCardsDisconnected();
+      } else {
+        btn.textContent   = 'CONNECT TO RV-LEVELER';
+        btn.className     = 'connect-btn disconnected';
+        text.textContent  = 'Disconnected';
+        calBtn.disabled   = true;
+        sleepBtn.disabled = true;
+        document.getElementById('signalBars').classList.remove('show');
+      }
+    }
+
+    function setCardsDisconnected() {
+      ['leftCard','rightCard','fbCard','statusCard'].forEach(id =>
+        document.getElementById(id).classList.add('disconnected-state'));
+    }
+
+    function clearCardsDisconnected() {
+      ['leftCard','rightCard','fbCard','statusCard'].forEach(id =>
+        document.getElementById(id).classList.remove('disconnected-state'));
+    }
+
+    // ── Data Updates ───────────────────────────────────────────
+    function parseSideData(raw) {
+      const lower  = raw.toLowerCase();
+      const match  = raw.match(/([\d.]+)\s*inches/);
+      const inches = match ? parseFloat(match[1]).toFixed(2) + '"' : '0.00"';
+
+      if (lower.includes('level raise')) return { action:'level', actionText:'LEVEL RAISE', inches };
+      if (lower.includes('level lower')) return { action:'level', actionText:'LEVEL LOWER', inches };
+      if (lower.startsWith('raise'))     return { action:'raise', actionText:'RAISE', inches };
+      if (lower.startsWith('lower'))     return { action:'lower', actionText:'LOWER', inches };
+      return { action:'level', actionText:'LEVEL', inches:'0.00"' };
+    }
+
+    function updateSide(side, raw) {
+      resetStaleTimer();
+      const { action, actionText, inches } = parseSideData(raw);
+      const card     = document.getElementById(side + 'Card');
+      const actionEl = document.getElementById(side + 'Action');
+      const inchesEl = document.getElementById(side + 'Inches');
+
+      card.classList.remove('raise','lower','level-state','disconnected-state');
+      actionEl.classList.remove('raise','lower','level');
+      inchesEl.classList.remove('level');
+
+      if (action === 'raise') {
+        card.classList.add('raise'); actionEl.classList.add('raise');
+      } else if (action === 'lower') {
+        card.classList.add('lower'); actionEl.classList.add('lower');
+      } else {
+        card.classList.add('level-state');
+        actionEl.classList.add('level');
+        inchesEl.classList.add('level');
+      }
+
+      actionEl.textContent = actionText;
+      inchesEl.textContent = inches;
+    }
+
+    function updateFB(raw) {
+      resetStaleTimer();
+      const fbCard   = document.getElementById('fbCard');
+      const fbAction = document.getElementById('fbAction');
+      const fbInches = document.getElementById('fbInches');
+
+      fbCard.classList.remove('raise','lower','level-state','disconnected-state');
+      fbAction.classList.remove('raise','lower','level');
+      fbInches.classList.remove('level');
+
+      const lower  = raw.toLowerCase();
+      const match  = raw.match(/([\d.]+)\s*inches/);
+      const inches = match ? parseFloat(match[1]).toFixed(2) + '"' : '0.00"';
+
+      let actionText = '';
+      let stateClass = '';
+
+      if (lower.includes('level raise front')) {
+        actionText = 'LEVEL RAISE FRONT'; stateClass = 'level-state';
+        fbAction.classList.add('level'); fbInches.classList.add('level');
+      } else if (lower.includes('level lower front')) {
+        actionText = 'LEVEL LOWER FRONT'; stateClass = 'level-state';
+        fbAction.classList.add('level'); fbInches.classList.add('level');
+      } else if (lower.includes('raise front')) {
+        actionText = 'RAISE FRONT'; stateClass = 'raise';
+        fbAction.classList.add('raise');
+      } else if (lower.includes('lower front')) {
+        actionText = 'LOWER FRONT'; stateClass = 'lower';
+        fbAction.classList.add('lower');
+      }
+
+      if (stateClass) fbCard.classList.add(stateClass);
+      fbAction.textContent = actionText;
+      fbInches.textContent = inches;
+    }
+
+    function updateStatus(raw) {
+      resetStaleTimer();
+      const card = document.getElementById('statusCard');
+      const text = document.getElementById('statusText');
+
+      card.classList.remove('level','needed','disconnected-state');
+      text.classList.remove('level','needed');
+
+      const isLevel = raw.includes('*** LEVEL ***');
+
+      if (isLevel) {
+        card.classList.add('level'); text.classList.add('level');
+        text.textContent = '✓ LEVEL';
+        if (!wasLevel) triggerLevelFlash();
+        wasLevel = true;
+      } else if (raw === '--' || raw === '') {
+        text.textContent = '--'; wasLevel = false;
+      } else {
+        card.classList.add('needed'); text.classList.add('needed');
+        text.textContent = 'LEVELING NEEDED';
+        wasLevel = false;
+      }
+    }
+
+    function updateCal(raw) {
+      const calValue = document.getElementById('calValue');
+      const calDate  = document.getElementById('calDate');
+
+      if (raw.startsWith('CALIBRATED — ')) {
+        calValue.textContent = 'CALIBRATED';
+        calDate.textContent  = raw.replace('CALIBRATED — ', '');
+      } else {
+        calValue.textContent = raw;
+        calDate.textContent  = '';
+      }
+    }
+
+    async function handleCalPending(val) {
+      if (val.trim() === '1' && connected && chars.dateTime) {
+        try {
+          await chars.dateTime.writeValue(encoder.encode(getDateTime()));
+          const ind = document.getElementById('savingIndicator');
+          ind.classList.add('show');
+          setTimeout(() => ind.classList.remove('show'), 3000);
+        } catch(e) { console.error('Failed to send date:', e); }
+      }
+    }
+
+    function triggerLevelFlash() {
+      const flash = document.getElementById('levelFlash');
+      flash.classList.remove('show');
+      void flash.offsetWidth;
+      flash.classList.add('show');
+      setTimeout(() => flash.classList.remove('show'), 1200);
+    }
+
+    // ── Calibration Flow ───────────────────────────────────────
+    function startCalibration() {
+      if (!connected) return;
+      document.getElementById('modal1').classList.add('show');
+    }
+
+    function showModal2() {
+      document.getElementById('modal1').classList.remove('show');
+      document.getElementById('modal2').classList.add('show');
+    }
+
+    function closeModals() {
+      document.getElementById('modal1').classList.remove('show');
+      document.getElementById('modal2').classList.remove('show');
+      document.getElementById('sleepModal').classList.remove('show');
+      document.getElementById('helpModal').classList.remove('show');
+    }
+
+    // ── Help ───────────────────────────────────────────────────
+    function showHelp() {
+      document.getElementById('helpModal').classList.add('show');
+    }
+
+    // ── Forget Device / BLE Reset ──────────────────────────────
+    // Disconnects and clears the cached BLE device from the browser
+    // Use if the app thinks it is paired but cannot connect
+    async function forgetDevice() {
+      closeModals();
+      if (connected) {
+        await doDisconnect();
+      }
+      if (bleDevice && bleDevice.forget) {
+        try {
+          await bleDevice.forget();
+          bleDevice = null;
+          chars     = {};
+          alert('Device forgotten. Tap Connect to pair again.');
+        } catch(e) {
+          bleDevice = null;
+          chars     = {};
+          alert('Device cleared. Tap Connect to pair again.');
+        }
+      } else {
+        bleDevice = null;
+        chars     = {};
+        alert('Device cleared. Tap Connect to pair again.');
+      }
+    }
+
+    async function doCalibrate() {
+      closeModals();
+      if (!connected || !chars.calibrate) return;
+      try {
+        await chars.calibrate.writeValue(encoder.encode('CALIBRATE'));
+      } catch(e) {
+        console.error('Calibrate failed:', e);
+        alert('Calibration failed: ' + e.message);
+      }
+    }
+
+    // ── Sleep Flow ─────────────────────────────────────────────
+    function startSleep() {
+      if (!connected) return;
+      document.getElementById('sleepModal').classList.add('show');
+    }
+
+    async function doSleep() {
+      closeModals();
+      if (!connected || !chars.sleep) return;
+      try {
+        await chars.sleep.writeValue(encoder.encode('SLEEP'));
+      } catch(e) {
+        console.error('Sleep command failed:', e);
+      }
+    }
+
+    // ── Service Worker — required for PWA install prompt ───────
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+  </script>
+</body>
+</html>
