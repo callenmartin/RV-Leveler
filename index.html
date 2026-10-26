@@ -696,7 +696,7 @@
 
 
 
-  <!-- Update Mode Modal (v2) -->
+  <!-- Update Mode Modal  -->
   <div class="modal-overlay" id="otaModal">
     <div class="help-modal">
       <h2>📶 UPDATE MODE</h2>
@@ -1008,7 +1008,7 @@
     let diagLive    = false;
     let diagThresh  = null;
 
-    // Calibration backup (v2)
+    // Calibration backup 
     const CAL_BACKUP_KEY   = 'rvLevelerCalBackup';
     let calBackupPrompted  = false;   // offer restore once per connection
     let lastCalStatus      = '';
@@ -1045,7 +1045,7 @@
     }
 
     // ── Diagnostics ────────────────────────────────────────────
-    // ── Update Mode (v2) ───────────────────────────────────────
+    // ── Update Mode  ───────────────────────────────────────
     let lastTriedSsid = null;
 
     function showOta() {
@@ -1304,7 +1304,7 @@
 
     // Builds a CSV and triggers a download. Works in Chrome on
     // Android - the file lands in the Downloads folder.
-    // ── Calibration backup (v2) ────────────────────────────────
+    // ── Calibration backup  ────────────────────────────────
     function loadCalBackup() {
       try {
         const raw = localStorage.getItem(CAL_BACKUP_KEY);
