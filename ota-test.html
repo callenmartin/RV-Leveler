@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BLE Firmware Test</title>
+<style>
+  :root { --bg:#f4f5f7; --card:#fff; --text:#1d2330; --muted:#667085; --line:#d8dce3;
+          --accent:#1f5fbf; --ok:#1e7f4c; --bad:#b42318; --bar:#1f5fbf; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12151b; --card:#1b2029; --text:#e6e9ef; --muted:#98a2b3; --line:#2c3340;
+            --accent:#6ea2ff; --ok:#4cc38a; --bad:#ff6b5e; --bar:#6ea2ff; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width:560px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; margin:4px 0 2px; }
+  .sub { color:var(--muted); margin:0 0 14px; font-size:13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+          padding:14px; margin-bottom:12px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em;
+             color:var(--muted); margin:0 0 10px; }
+  button { font:inherit; font-weight:600; border:0; border-radius:8px; padding:11px 14px;
+           background:var(--accent); color:#fff; width:100%; margin-top:8px; }
+  button.secondary { background:transparent; color:var(--accent); border:1px solid var(--line); }
+  button:disabled { opacity:.4; }
+  input[type=file] { width:100%; font:inherit; }
+  dl { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; margin:0; font-size:14px; }
+  dt { color:var(--muted); } dd { margin:0; word-break:break-word; }
+  .bar { height:10px; background:var(--line); border-radius:5px; overflow:hidden; margin:10px 0 6px; }
+  .bar > div { height:100%; width:0; background:var(--bar); transition:width .2s; }
+  .stat { display:flex; justify-content:space-between; font-size:13px; color:var(--muted); }
+  .ok { color:var(--ok); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  #log { font:12px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space:pre-wrap;
+         max-height:220px; overflow:auto; margin:0; color:var(--muted); }
+  .note { font-size:13px; color:var(--muted); margin:8px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>BLE Firmware Test</h1>
+  <p class="sub">Bench test for sending firmware over Bluetooth. Not part of the RV Leveler app.</p>
+
+  <div class="card">
+    <h2>1 · Device</h2>
+    <button id="btnConnect">Connect</button>
+    <button id="btnInfo" class="secondary" disabled>Refresh info</button>
+    <dl id="info" style="margin-top:12px"></dl>
+  </div>
+
+  <div class="card">
+    <h2>2 · Firmware file</h2>
+    <input type="file" id="file" accept=".bin,application/octet-stream">
+    <p id="fileMsg" class="note">Use the <b>.ino.bin</b> from Sketch → Export Compiled Binary — not the .merged.bin.</p>
+  </div>
+
+  <div class="card">
+    <h2>3 · Send</h2>
+    <p class="note" id="armMsg">If the board requires it, press its <b>BOOT</b> button first (arms for 2 minutes).</p>
+    <button id="btnStart" disabled>Send firmware</button>
+    <button id="btnAbort" class="secondary" disabled>Abort</button>
+    <div class="bar"><div id="bar"></div></div>
+    <div class="stat"><span id="pct">—</span><span id="speed"></span><span id="eta"></span></div>
+    <p id="result" class="note"></p>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <pre id="log"></pre>
+  </div>
+</main>
+
+<script>
+const SERVICE = '12345678-1234-1234-1234-123456789abc';
+const CTRL    = '12345678-1234-1234-1234-123456789abf';
+const DATA    = '12345678-1234-1234-1234-123456789ac0';
+
+const $ = id => document.getElementById(id);
+let device = null, ctrl = null, data = null;
+let fw = null;                 // Uint8Array
+let waiter = null;             // pending reply {match, resolve, reject, timer}
+let acked = 0, ackWaiters = [], transferring = false, abortReq = false;
+let lastInfo = {}, lastErr = '';
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  $('log').textContent = `${t}  ${msg}\n` + $('log').textContent;
+}
+
+function showInfo(line) {
+  const parts = line.split('|').slice(1);
+  lastInfo = {};
+  for (const p of parts) { const [k, v] = p.split('='); lastInfo[k] = v; }
+  const label = { build:'Build', running:'Running slot', state:'Image state',
+                  rolledBackFrom:'Rolled back from', slotSize:'Slot size',
+                  heap:'Free heap', mtu:'Link MTU', button:'Arm button',
+                  health:'Health check', sleepTest:'Sleep test' };
+  $('info').innerHTML = Object.entries(lastInfo).map(([k, v]) => {
+    let cls = '';
+    if (k === 'rolledBackFrom' && v !== 'none') cls = 'bad';
+    if (k === 'state' && v === 'valid') cls = 'ok';
+    let shown = v;
+    if (k === 'slotSize' || k === 'heap') shown = (+v).toLocaleString() + ' bytes';
+    return `<dt>${label[k] || k}</dt><dd class="${cls}">${shown}</dd>`;
+  }).join('');
+  updateStart();
+}
+
+function onCtrl(ev) {
+  const s = new TextDecoder().decode(ev.target.value);
+  if (s.startsWith('ACK|')) {
+    acked = parseInt(s.slice(4), 10);
+    ackWaiters.splice(0).forEach(f => f());
+    progress();
+    return;
+  }
+  log('← ' + s);
+  if (s.startsWith('INFO|')) showInfo(s);
+  if (s.startsWith('ARMED')) $('armMsg').innerHTML = '<span class="ok">Armed — send within 2 minutes.</span>';
+  if (waiter && waiter.match(s)) {
+    clearTimeout(waiter.timer); const w = waiter; waiter = null; w.resolve(s);
+  }
+  if (s.startsWith('ERR|') && transferring) {
+    lastErr = s.slice(4); abortReq = true; ackWaiters.splice(0).forEach(f => f());
+  }
+}
+
+function waitFor(match, ms) {
+  const p = new Promise((resolve, reject) => {
+    const w = { match, resolve, reject };
+    w.timer = setTimeout(() => { if (waiter === w) waiter = null; reject(new Error('no reply from device')); }, ms);
+    waiter = w;
+  });
+  p.catch(() => {});            // avoid unhandled-rejection noise; callers still see it
+  return p;
+}
+
+async function send(cmd) {
+  log('→ ' + cmd);
+  await ctrl.writeValue(new TextEncoder().encode(cmd));
+}
+
+async function connect() {
+  if (!navigator.bluetooth) { log('Web Bluetooth not available — use Chrome on Android.'); return; }
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'RV-Leveler' }], optionalServices: [SERVICE] });
+    device.addEventListener('gattserverdisconnected', () => {
+      log('Disconnected'); ctrl = data = null;
+      $('btnInfo').disabled = true; $('btnConnect').textContent = 'Reconnect';
+      if (transferring) { abortReq = true; ackWaiters.splice(0).forEach(f => f()); }
+      updateStart();
+    });
+    await attach();
+  } catch (e) { log('Connect failed: ' + e.message); }
+}
+
+async function attach() {
+  log('Connecting to ' + (device.name || 'device') + '…');
+  const server = await device.gatt.connect();
+  const svc = await server.getPrimaryService(SERVICE);
+  ctrl = await svc.getCharacteristic(CTRL);
+  data = await svc.getCharacteristic(DATA);
+  await ctrl.startNotifications();
+  ctrl.addEventListener('characteristicvaluechanged', onCtrl);
+  $('btnInfo').disabled = false; $('btnConnect').textContent = 'Connected';
+  log('Connected');
+  await new Promise(r => setTimeout(r, 600));   // let the MTU exchange settle
+  const reply = waitFor(s => s.startsWith('INFO|'), 5000);
+  await send('INFO');
+  await reply.catch(e => log(e.message));
+}
+
+$('btnConnect').onclick = async () => {
+  if (device && !device.gatt.connected) { try { await attach(); } catch (e) { log('Reconnect failed: ' + e.message); } }
+  else if (!device) connect();
+};
+$('btnInfo').onclick = async () => { const r = waitFor(s => s.startsWith('INFO|'), 5000); await send('INFO'); await r.catch(e => log(e.message)); };
+
+$('file').onchange = async () => {
+  fw = null; const f = $('file').files[0]; if (!f) return updateStart();
+  const buf = new Uint8Array(await f.arrayBuffer());
+  const msg = $('fileMsg');
+  if (buf[0] !== 0xE9) {
+    msg.innerHTML = '<span class="bad">Not an app image.</span> First byte must be 0xE9. ' +
+      (f.name.includes('merged') ? 'This is the merged file — pick the .ino.bin instead.' : '');
+  } else if (lastInfo.slotSize && buf.length > +lastInfo.slotSize) {
+    msg.innerHTML = `<span class="bad">Too big</span> for the update slot (${buf.length.toLocaleString()} > ${(+lastInfo.slotSize).toLocaleString()} bytes).`;
+  } else {
+    fw = buf;
+    msg.innerHTML = `<span class="ok">${f.name}</span> — ${buf.length.toLocaleString()} bytes`;
+  }
+  updateStart();
+};
+
+function updateStart() {
+  $('btnStart').disabled = !(fw && ctrl && !transferring);
+  $('btnAbort').disabled = !transferring;
+}
+
+let t0 = 0;
+function progress() {
+  if (!fw) return;
+  const pct = acked / fw.length * 100;
+  $('bar').style.width = pct.toFixed(1) + '%';
+  $('pct').textContent = pct.toFixed(1) + '%';
+  const secs = (performance.now() - t0) / 1000;
+  if (secs > 0.5 && acked > 0) {
+    const rate = acked / secs;
+    $('speed').textContent = (rate / 1024).toFixed(1) + ' kB/s';
+    $('eta').textContent = Math.max(0, (fw.length - acked) / rate).toFixed(0) + ' s left';
+  }
+}
+
+function finish(ok, text) {
+  transferring = false; updateStart();
+  $('result').innerHTML = ok ? `<span class="ok">${text}</span>` : `<span class="bad">Failed:</span> ${text} — the old firmware is still running.`;
+  log(ok ? text : 'FAILED: ' + text);
+}
+
+$('btnAbort').onclick = async () => {
+  abortReq = true; ackWaiters.splice(0).forEach(f => f());
+  try { await send('ABORT'); } catch (e) {}
+};
+
+$('btnStart').onclick = async () => {
+  transferring = true; abortReq = false; lastErr = ''; acked = 0; updateStart();
+  $('result').textContent = ''; $('bar').style.width = '0';
+  $('speed').textContent = $('eta').textContent = '';
+  try {
+    const ready = waitFor(s => s.startsWith('READY|') || s.startsWith('ERR|'), 20000);
+    await send('BEGIN|' + fw.length);
+    const r = await ready;
+    if (r.startsWith('ERR|')) return finish(false, r.slice(4));
+    const [, chunkS, winS] = r.split('|');
+    const chunk = +chunkS, win = +winS;
+    log(`Sending ${fw.length.toLocaleString()} bytes, ${chunk}-byte chunks, ${win}-byte window`);
+    const done = waitFor(s => s.startsWith('DONE|') || s.startsWith('ERR|'), 600000);
+    t0 = performance.now();
+    let sent = 0;
+    while (sent < fw.length) {
+      if (abortReq) throw new Error(lastErr || (ctrl ? 'stopped' : 'disconnected'));
+      if (sent - acked >= win) {
+        await new Promise((res, rej) => {
+          const tm = setTimeout(() => rej(new Error('no ACK for 15 s')), 15000);
+          ackWaiters.push(() => { clearTimeout(tm); res(); });
+        });
+        continue;
+      }
+      const end = Math.min(sent + chunk, fw.length);
+      await data.writeValueWithoutResponse(fw.subarray(sent, end));
+      sent = end;
+    }
+    const d = await done;
+    if (d.startsWith('ERR|')) return finish(false, d.slice(4));
+    const [, bytes, ms] = d.split('|');
+    const secs = (+ms / 1000);
+    finish(true, `Sent ${(+bytes).toLocaleString()} bytes in ${secs.toFixed(1)} s ` +
+                 `(${(+bytes / secs / 1024).toFixed(1)} kB/s). Device is rebooting — wait ~5 s, then Reconnect and check the build and image state.`);
+  } catch (e) {
+    if (transferring) finish(false, e.message);
+  }
+};
+</script>
+</body>
+</html>
