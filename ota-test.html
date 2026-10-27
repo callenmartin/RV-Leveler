@@ -99,7 +99,7 @@ function showInfo(line) {
   const parts = line.split('|').slice(1);
   lastInfo = {};
   for (const p of parts) { const [k, v] = p.split('='); lastInfo[k] = v; }
-  const label = { build:'Build', running:'Running slot', state:'Image state',
+  const label = { build:'Build', running:'Running slot', state:'Image state', bootState:'State at boot',
                   rolledBackFrom:'Rolled back from', slotSize:'Slot size',
                   heap:'Free heap', mtu:'Link MTU', interval:'Conn. interval', button:'Arm button', armed:'Armed',
                   health:'Health check', sleepTest:'Sleep test' };
