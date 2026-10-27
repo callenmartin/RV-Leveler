@@ -94,17 +94,26 @@ function showInfo(line) {
   for (const p of parts) { const [k, v] = p.split('='); lastInfo[k] = v; }
   const label = { build:'Build', running:'Running slot', state:'Image state',
                   rolledBackFrom:'Rolled back from', slotSize:'Slot size',
-                  heap:'Free heap', mtu:'Link MTU', button:'Arm button',
+                  heap:'Free heap', mtu:'Link MTU', button:'Arm button', armed:'Armed',
                   health:'Health check', sleepTest:'Sleep test' };
   $('info').innerHTML = Object.entries(lastInfo).map(([k, v]) => {
     let cls = '';
     if (k === 'rolledBackFrom' && v !== 'none') cls = 'bad';
     if (k === 'state' && v === 'valid') cls = 'ok';
+    if (k === 'armed' && v !== 'no') cls = 'ok';
     let shown = v;
     if (k === 'slotSize' || k === 'heap') shown = (+v).toLocaleString() + ' bytes';
     return `<dt>${label[k] || k}</dt><dd class="${cls}">${shown}</dd>`;
   }).join('');
+  setArmMsg(lastInfo.armed && lastInfo.armed !== 'no' ? lastInfo.armed : null);
   updateStart();
+}
+
+const ARM_IDLE = 'If the board requires it, press its <b>BOOT</b> button first (arms for 2 minutes, one transfer).';
+function setArmMsg(left) {
+  $('armMsg').innerHTML = left
+    ? `<span class="ok">Armed (${left} left) — send now.</span>`
+    : ARM_IDLE;
 }
 
 function onCtrl(ev) {
@@ -117,7 +126,7 @@ function onCtrl(ev) {
   }
   log('← ' + s);
   if (s.startsWith('INFO|')) showInfo(s);
-  if (s.startsWith('ARMED')) $('armMsg').innerHTML = '<span class="ok">Armed — send within 2 minutes.</span>';
+  if (s.startsWith('ARMED')) setArmMsg('120s');
   if (waiter && waiter.match(s)) {
     clearTimeout(waiter.timer); const w = waiter; waiter = null; w.resolve(s);
   }
@@ -147,7 +156,7 @@ async function connect() {
     device = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: 'RV-Leveler' }], optionalServices: [SERVICE] });
     device.addEventListener('gattserverdisconnected', () => {
-      log('Disconnected'); ctrl = data = null;
+      log('Disconnected'); ctrl = data = null; setArmMsg(null);
       $('btnInfo').disabled = true; $('btnConnect').textContent = 'Reconnect';
       if (transferring) { abortReq = true; ackWaiters.splice(0).forEach(f => f()); }
       updateStart();
@@ -214,7 +223,7 @@ function progress() {
 }
 
 function finish(ok, text) {
-  transferring = false; updateStart();
+  transferring = false; setArmMsg(null); updateStart();
   $('result').innerHTML = ok ? `<span class="ok">${text}</span>` : `<span class="bad">Failed:</span> ${text} — the old firmware is still running.`;
   log(ok ? text : 'FAILED: ' + text);
 }
