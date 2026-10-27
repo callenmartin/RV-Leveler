@@ -568,6 +568,19 @@
     }
 
     .forget-btn:active { transform: scale(0.97); }
+
+    /* ── Firmware update modal ─────────────────────────────── */
+    .fw-bar { height: 10px; background: var(--border); border-radius: 5px;
+              overflow: hidden; margin: 10px 0 6px; }
+    .fw-bar > div { height: 100%; width: 0; background: var(--green); transition: width .2s; }
+    .fw-stat { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--text-dim); }
+    .fw-ok  { color: var(--green); font-weight: 700; }
+    .fw-bad { color: var(--red);   font-weight: 700; }
+    .fw-log { font: 0.66rem/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap;
+              max-height: 180px; overflow: auto; color: var(--text-dim); background: var(--bg);
+              border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-top: 6px; }
+    .fw-file { width: 100%; font-size: 0.75rem; color: var(--text); margin-top: 4px; }
+    .app-version { text-align: center; font-size: 0.65rem; color: var(--text-dim); margin-top: 10px; }
   </style>
 </head>
 <body>
@@ -653,7 +666,9 @@
   <!-- Help button -->
   <button class="help-btn" onclick="showHelp()">ℹ️ HOW IT WORKS</button>
   <button class="help-btn" onclick="showDiag()" style="margin-top:8px">🔧 DIAGNOSTICS</button>
-  <button class="help-btn" onclick="showOta()" style="margin-top:8px">📶 UPDATE MODE</button>
+  <button class="help-btn" onclick="showFw()" style="margin-top:8px">⬆️ FIRMWARE UPDATE</button>
+  <button class="help-btn" onclick="showOta()" style="margin-top:8px">📶 UPDATE MODE (WIFI)</button>
+  <div class="app-version" id="appVersion"></div>
 
   <!-- Calibrate Modal 1 -->
   <div class="modal-overlay" id="modal1">
@@ -696,7 +711,7 @@
 
 
 
-  <!-- Update Mode Modal  -->
+  <!-- Update Mode Modal -->
   <div class="modal-overlay" id="otaModal">
     <div class="help-modal">
       <h2>📶 UPDATE MODE</h2>
@@ -768,6 +783,64 @@
         </p>
       </div>
 
+    </div>
+  </div>
+
+  <!-- Firmware Update (Bluetooth) Modal -->
+  <div class="modal-overlay" id="fwModal">
+    <div class="help-modal">
+      <h2>⬆️ FIRMWARE UPDATE</h2>
+
+      <div class="help-section">
+        <h3>Device</h3>
+        <div class="help-row"><span class="help-label">Firmware</span><span class="help-value" id="fwBuild">—</span></div>
+        <div class="help-row"><span class="help-label">Image state</span><span class="help-value" id="fwState">—</span></div>
+        <div class="help-row"><span class="help-label">Rolled back from</span><span class="help-value" id="fwRolled">—</span></div>
+        <div class="help-row"><span class="help-label">Sensor</span><span class="help-value" id="fwSensor">—</span></div>
+        <div class="help-row"><span class="help-label">Link</span><span class="help-value" id="fwLink">—</span></div>
+        <div class="help-row"><span class="help-label">Armed</span><span class="help-value" id="fwArmed">—</span></div>
+        <p class="help-note" id="fwUnsupported" style="display:none; margin-top:6px">
+          This firmware cannot be updated over Bluetooth yet. Install a
+          build with Bluetooth updates once over USB (or WiFi update mode)
+          first — after that, updates can come from here.
+        </p>
+      </div>
+
+      <div class="help-section">
+        <h3>How To Update</h3>
+        <p class="help-note">
+          1. In Arduino IDE: Sketch → Export Compiled Binary. Copy the
+             <b>.ino.bin</b> file to the phone (not the .merged.bin).<br>
+          2. Choose it below.<br>
+          3. <b>Press the wake button</b> in the cupboard. That allows one
+             update within 2 minutes.<br>
+          4. Tap SEND. Keep the app open and the phone near the trailer —
+             about 30 seconds.<br>
+          5. The device restarts into the new firmware and checks itself.
+             If Bluetooth or the BNO055 does not come up, it goes back to
+             the previous firmware on its own.
+        </p>
+        <input type="file" id="fwFile" class="fw-file" accept=".bin,application/octet-stream">
+        <p class="help-note" id="fwFileMsg"></p>
+        <p class="help-note" id="fwArmMsg"></p>
+        <button class="help-btn" id="fwSendBtn" onclick="fwStart()" style="margin-top:8px" disabled>SEND FIRMWARE</button>
+        <button class="forget-btn" id="fwAbortBtn" onclick="fwAbortClick()" style="margin-top:8px" disabled>ABORT</button>
+        <div class="fw-bar"><div id="fwBar"></div></div>
+        <div class="fw-stat"><span id="fwPct">—</span><span id="fwSpeed"></span><span id="fwEta"></span></div>
+        <p class="help-note" id="fwResult"></p>
+      </div>
+
+      <div class="help-section">
+        <h3>Device Event Log</h3>
+        <p class="help-note">Boots, resets, updates and sleeps, kept by the device across restarts.</p>
+        <pre class="fw-log" id="fwDevLog">—</pre>
+        <button class="help-btn" onclick="fwFetchLog()" style="margin-top:8px">FETCH EVENT LOG</button>
+        <button class="help-btn" onclick="fwDownloadLog()" style="margin-top:8px">DOWNLOAD LOG FILE</button>
+      </div>
+
+      <div class="modal-buttons" style="margin-top:12px">
+        <button class="modal-btn cancel full" onclick="closeModals()">Close</button>
+      </div>
     </div>
   </div>
 
@@ -989,6 +1062,11 @@
     const CHAR_OTA      = '12345678-1234-1234-1234-123456789abe';
     const CHAR_DIAG     = '12345678-1234-1234-1234-123456789abd';
     const CHAR_SLEEP       = '12345678-1234-1234-1234-123456789abb';
+    const CHAR_FWCTRL      = '12345678-1234-1234-1234-123456789abf';
+    const CHAR_FWDATA      = '12345678-1234-1234-1234-123456789ac0';
+    // Bump on every deploy — shown under the main buttons, so "is the
+    // phone running the latest app?" is answered by looking.
+    const APP_VERSION      = '2026.10.27-bt1';
 
     let bleDevice = null;
     let connected = false;
@@ -1008,7 +1086,7 @@
     let diagLive    = false;
     let diagThresh  = null;
 
-    // Calibration backup 
+    // Calibration backup
     const CAL_BACKUP_KEY   = 'rvLevelerCalBackup';
     let calBackupPrompted  = false;   // offer restore once per connection
     let lastCalStatus      = '';
@@ -1045,7 +1123,7 @@
     }
 
     // ── Diagnostics ────────────────────────────────────────────
-    // ── Update Mode  ───────────────────────────────────────
+    // ── Update Mode ───────────────────────────────────────
     let lastTriedSsid = null;
 
     function showOta() {
@@ -1304,7 +1382,7 @@
 
     // Builds a CSV and triggers a download. Works in Chrome on
     // Android - the file lands in the Downloads folder.
-    // ── Calibration backup  ────────────────────────────────
+    // ── Calibration backup ────────────────────────────────
     function loadCalBackup() {
       try {
         const raw = localStorage.getItem(CAL_BACKUP_KEY);
@@ -1505,6 +1583,9 @@
             if (gap > worstGap) worstGap = gap;
           }
         }
+        // During a firmware transfer the device stops sending level
+        // readings on purpose — not a weak signal.
+        if (fwTransferring) return;
         updateSignalStrength(worstGap);
         if (worstGap > STALE_MS) {
           document.getElementById('staleBanner').classList.add('show');
@@ -1656,6 +1737,21 @@
           chars.diag = null;
         }
 
+        // Firmware update over Bluetooth — optional; older firmware
+        // does not have these characteristics.
+        try {
+          chars.fwCtrl = await bleService.getCharacteristic(CHAR_FWCTRL);
+          chars.fwData = await bleService.getCharacteristic(CHAR_FWDATA);
+          await chars.fwCtrl.startNotifications();
+          chars.fwCtrl.addEventListener('characteristicvaluechanged',
+            e => handleFw(decoder.decode(e.target.value)));
+          setTimeout(() => fwSend('INFO').catch(() => {}), 2500);
+        } catch(e) {
+          console.warn('Firmware update characteristics unavailable:', e);
+          chars.fwCtrl = chars.fwData = null;
+        }
+        fwUpdateUI();
+
         // Subscribe to roll and pitch for debug display — removed
         // Raw angles available via Serial monitor with DEBUG_MODE=1 if needed
 
@@ -1684,6 +1780,7 @@
     function onDisconnected() {
       connected = false;
       chars     = {};
+      fwOnDisconnect();
       setConnectedUI(false);
       releaseWakeLock();
       stopStaleCheck();
@@ -1888,6 +1985,7 @@
       document.getElementById('helpModal').classList.remove('show');
       document.getElementById('diagModal').classList.remove('show');
       document.getElementById('otaModal').classList.remove('show');
+      document.getElementById('fwModal').classList.remove('show');
     }
 
     // ── Help ───────────────────────────────────────────────────
@@ -1951,6 +2049,218 @@
     // ── Service Worker — required for PWA install prompt ───────
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // FIRMWARE UPDATE OVER BLUETOOTH
+    // Protocol proven on the bench (Bench/BLE_OTA_Test + ota-test.html).
+    // ═══════════════════════════════════════════════════════════
+    let fwFileData = null, fwTransferring = false, fwAbortReq = false, fwLastErr = '';
+    let fwAcked = 0, fwAckWaiters = [], fwWaiter = null, fwT0 = 0;
+    let fwInfo = {}, fwDevLog = [], fwDevLogPending = [], fwDevLogMeta = '';
+    const fwPageLog = [];
+
+    document.getElementById('appVersion').textContent = 'App ' + APP_VERSION;
+
+    function fwLog(msg) { fwPageLog.push(new Date().toISOString() + '  ' + msg); }
+
+    function showFw() {
+      document.getElementById('fwModal').classList.add('show');
+      fwUpdateUI();
+      if (chars.fwCtrl) fwSend('INFO').catch(() => {});
+    }
+
+    function fwUpdateUI() {
+      const supported = !!(connected && chars.fwCtrl);
+      document.getElementById('fwUnsupported').style.display =
+        (connected && !chars.fwCtrl) ? 'block' : 'none';
+      document.getElementById('fwSendBtn').disabled = !(supported && fwFileData && !fwTransferring);
+      document.getElementById('fwAbortBtn').disabled = !fwTransferring;
+    }
+
+    function fwShowInfo(line) {
+      fwInfo = {};
+      line.split('|').slice(1).forEach(p => { const i = p.indexOf('='); fwInfo[p.slice(0, i)] = p.slice(i + 1); });
+      const set = (id, v, cls) => { const el = document.getElementById(id); el.textContent = v; el.className = 'help-value ' + (cls || ''); };
+      set('fwBuild', fwInfo.build || '—');
+      set('fwState', (fwInfo.state || '—') + (fwInfo.bootState === 'pending-verify' ? ' (just updated)' : ''),
+          fwInfo.state === 'valid' ? 'fw-ok' : '');
+      set('fwRolled', fwInfo.rolledBackFrom || '—', fwInfo.rolledBackFrom && fwInfo.rolledBackFrom !== 'none' ? 'fw-bad' : '');
+      set('fwSensor', fwInfo.sensor || '—', fwInfo.sensor === 'ok' ? 'fw-ok' : 'fw-bad');
+      set('fwLink', (fwInfo.mtu ? 'MTU ' + fwInfo.mtu : '') + (fwInfo.interval ? ', ' + fwInfo.interval : ''));
+      fwSetArmed(fwInfo.armed && fwInfo.armed !== 'no' ? fwInfo.armed : null);
+    }
+
+    function fwSetArmed(left) {
+      document.getElementById('fwArmed').textContent = left ? 'yes — ' + left + ' left' : 'no';
+      document.getElementById('fwArmed').className = 'help-value ' + (left ? 'fw-ok' : '');
+      document.getElementById('fwArmMsg').innerHTML = left
+        ? '<span class="fw-ok">Armed — tap SEND now.</span>'
+        : 'Press the wake button on the device to arm (one update, 2 minutes).';
+    }
+
+    function handleFw(s) {
+      if (s.startsWith('ACK|')) {
+        const [, a] = s.split('|');
+        fwAcked = parseInt(a, 10);
+        fwAckWaiters.splice(0).forEach(f => f());
+        fwProgress();
+        return;
+      }
+      if (s.startsWith('LOG|')) { fwDevLogPending.push(s.slice(4)); return; }
+      fwLog('← ' + s);
+      if (s.startsWith('LOGEND|')) {
+        const [, n, used, size] = s.split('|');
+        fwDevLog = fwDevLogPending; fwDevLogPending = [];
+        fwDevLogMeta = `${n} lines, ${used}/${size} bytes`;
+        document.getElementById('fwDevLog').textContent = fwDevLog.length ? fwDevLog.join('\n') : '(empty)';
+        const el = document.getElementById('fwDevLog'); el.scrollTop = el.scrollHeight;
+      }
+      if (s.startsWith('INFO|')) fwShowInfo(s);
+      if (s.startsWith('ARMED')) fwSetArmed(s.split('|')[1] + 's');
+      if (fwWaiter && fwWaiter.match(s)) {
+        clearTimeout(fwWaiter.timer); const w = fwWaiter; fwWaiter = null; w.resolve(s);
+      }
+      if (s.startsWith('ERR|') && fwTransferring) {
+        fwLastErr = s.slice(4); fwAbortReq = true; fwAckWaiters.splice(0).forEach(f => f());
+      }
+    }
+
+    function fwWaitFor(match, ms) {
+      const p = new Promise((resolve, reject) => {
+        const w = { match, resolve, reject };
+        w.timer = setTimeout(() => { if (fwWaiter === w) fwWaiter = null; reject(new Error('no reply from device')); }, ms);
+        fwWaiter = w;
+      });
+      p.catch(() => {});
+      return p;
+    }
+
+    async function fwSend(cmd) {
+      if (!chars.fwCtrl) throw new Error('not connected');
+      fwLog('→ ' + cmd);
+      await chars.fwCtrl.writeValue(new TextEncoder().encode(cmd));
+    }
+
+    async function fwFetchLog() {
+      if (!chars.fwCtrl) { alert('Connect to a device with Bluetooth updates first.'); return; }
+      fwDevLogPending = [];
+      const done = fwWaitFor(s => s.startsWith('LOGEND|'), 15000);
+      await fwSend('LOG');
+      await done.catch(() => alert('No reply from the device.'));
+    }
+
+    function fwDownloadLog() {
+      const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
+      const text = [
+        'RV Leveler firmware update log — ' + new Date().toString(),
+        'App ' + APP_VERSION + ' | ' + navigator.userAgent, '',
+        '== Device info ==', ...Object.entries(fwInfo).map(([k, v]) => `${k}: ${v}`), '',
+        '== Device event log (' + fwDevLogMeta + ') ==', ...fwDevLog, '',
+        '== App log ==', ...fwPageLog, ''
+      ].join('\n');
+      const blob = new Blob([text], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'rv-leveler-fw-log-' + stamp + '.txt';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    }
+
+    document.getElementById('fwFile').addEventListener('change', async () => {
+      // Disable SEND immediately — reading a large file takes a moment.
+      fwFileData = null; fwUpdateUI();
+      const f = document.getElementById('fwFile').files[0];
+      const msg = document.getElementById('fwFileMsg');
+      if (!f) { msg.textContent = ''; return; }
+      const buf = new Uint8Array(await f.arrayBuffer());
+      if (buf[0] !== 0xE9) {
+        msg.innerHTML = '<span class="fw-bad">Not a firmware file.</span> ' +
+          (f.name.includes('merged') ? 'This is the merged file — choose the .ino.bin instead.' : 'Choose the .ino.bin from Export Compiled Binary.');
+        fwLog('File rejected: ' + f.name);
+      } else if (fwInfo.slotSize && buf.length > +fwInfo.slotSize) {
+        msg.innerHTML = '<span class="fw-bad">Too big</span> for the update slot.';
+        fwLog('File rejected (too big): ' + f.name);
+      } else {
+        fwFileData = buf;
+        msg.innerHTML = `<span class="fw-ok">${f.name}</span> — ${buf.length.toLocaleString()} bytes`;
+        fwLog('File loaded: ' + f.name + ' (' + buf.length + ' bytes)');
+      }
+      fwUpdateUI();
+    });
+
+    function fwProgress() {
+      if (!fwFileData) return;
+      const pct = fwAcked / fwFileData.length * 100;
+      document.getElementById('fwBar').style.width = pct.toFixed(1) + '%';
+      document.getElementById('fwPct').textContent = pct.toFixed(0) + '%';
+      const secs = (performance.now() - fwT0) / 1000;
+      if (secs > 0.5 && fwAcked > 0) {
+        const rate = fwAcked / secs;
+        document.getElementById('fwSpeed').textContent = (rate / 1024).toFixed(1) + ' kB/s';
+        document.getElementById('fwEta').textContent = Math.max(0, (fwFileData.length - fwAcked) / rate).toFixed(0) + ' s left';
+      }
+    }
+
+    function fwFinish(ok, text) {
+      fwTransferring = false;
+      document.getElementById('fwResult').innerHTML = ok
+        ? `<span class="fw-ok">${text}</span>`
+        : `<span class="fw-bad">Failed:</span> ${text} — the current firmware is still running.`;
+      fwLog(ok ? text : 'FAILED: ' + text);
+      fwSetArmed(null);
+      fwUpdateUI();
+    }
+
+    function fwOnDisconnect() {
+      if (fwTransferring) { fwAbortReq = true; fwAckWaiters.splice(0).forEach(f => f()); }
+      fwSetArmed(null);
+      fwUpdateUI();
+    }
+
+    async function fwAbortClick() {
+      fwAbortReq = true; fwAckWaiters.splice(0).forEach(f => f());
+      try { await fwSend('ABORT'); } catch (e) {}
+    }
+
+    async function fwStart() {
+      if (!fwFileData || !chars.fwCtrl || !chars.fwData || fwTransferring) return;
+      fwTransferring = true; fwAbortReq = false; fwLastErr = ''; fwAcked = 0; fwUpdateUI();
+      document.getElementById('fwResult').textContent = '';
+      document.getElementById('fwBar').style.width = '0';
+      document.getElementById('fwSpeed').textContent = document.getElementById('fwEta').textContent = '';
+      try {
+        const ready = fwWaitFor(s => s.startsWith('READY|') || s.startsWith('ERR|'), 20000);
+        await fwSend('BEGIN|' + fwFileData.length);
+        const r = await ready;
+        if (r.startsWith('ERR|')) return fwFinish(false, r.slice(4));
+        const [, chunkS, winS] = r.split('|');
+        const chunk = +chunkS, win = +winS;
+        fwLog(`Sending ${fwFileData.length} bytes, ${chunk}-byte chunks, ${win}-byte window`);
+        const done = fwWaitFor(s => s.startsWith('DONE|') || s.startsWith('ERR|'), 600000);
+        fwT0 = performance.now();
+        let sent = 0;
+        while (sent < fwFileData.length) {
+          if (fwAbortReq) throw new Error(fwLastErr || (connected ? 'stopped' : 'disconnected'));
+          if (sent - fwAcked >= win) {
+            await new Promise((res, rej) => {
+              const tm = setTimeout(() => rej(new Error('no acknowledgement for 15 s')), 15000);
+              fwAckWaiters.push(() => { clearTimeout(tm); res(); });
+            });
+            continue;
+          }
+          const end = Math.min(sent + chunk, fwFileData.length);
+          await chars.fwData.writeValueWithoutResponse(fwFileData.subarray(sent, end));
+          sent = end;
+        }
+        const d = await done;
+        if (d.startsWith('ERR|')) return fwFinish(false, d.slice(4));
+        const [, bytes, ms] = d.split('|');
+        fwFinish(true, `Sent ${(+bytes).toLocaleString()} bytes in ${(+ms / 1000).toFixed(1)} s. ` +
+          'The device is restarting into the new firmware — reconnect in about 10 s and check Firmware and Image state here.');
+      } catch (e) {
+        if (fwTransferring) fwFinish(false, e.message);
+      }
     }
   </script>
 </body>

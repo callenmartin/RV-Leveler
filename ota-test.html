@@ -40,7 +40,7 @@
 <body>
 <main>
   <h1>BLE Firmware Test</h1>
-  <p class="sub">Bench test for sending firmware over Bluetooth. Not part of the RV Leveler app. · <b>Page v5</b></p>
+  <p class="sub">Bench test for sending firmware over Bluetooth. Not part of the RV Leveler app. · <b>Page v6</b></p>
 
   <div class="card">
     <h2>1 · Device</h2>
@@ -277,17 +277,23 @@ $('btnConnect').onclick = async () => {
 $('btnInfo').onclick = async () => { const r = waitFor(s => s.startsWith('INFO|'), 5000); await send('INFO'); await r.catch(e => log(e.message)); };
 
 $('file').onchange = async () => {
-  fw = null; const f = $('file').files[0]; if (!f) return updateStart();
+  // Disable Send immediately — reading a large file takes a moment, and
+  // Send must not be tappable with no valid file loaded.
+  fw = null; updateStart();
+  const f = $('file').files[0]; if (!f) return;
   const buf = new Uint8Array(await f.arrayBuffer());
   const msg = $('fileMsg');
   if (buf[0] !== 0xE9) {
     msg.innerHTML = '<span class="bad">Not an app image.</span> First byte must be 0xE9. ' +
       (f.name.includes('merged') ? 'This is the merged file — pick the .ino.bin instead.' : '');
+    log(`File rejected: ${f.name} (${buf.length.toLocaleString()} bytes) — first byte 0x${buf[0].toString(16)}`);
   } else if (lastInfo.slotSize && buf.length > +lastInfo.slotSize) {
     msg.innerHTML = `<span class="bad">Too big</span> for the update slot (${buf.length.toLocaleString()} > ${(+lastInfo.slotSize).toLocaleString()} bytes).`;
+    log(`File rejected: ${f.name} is too big for the slot`);
   } else {
     fw = buf;
     msg.innerHTML = `<span class="ok">${f.name}</span> — ${buf.length.toLocaleString()} bytes`;
+    log(`File loaded: ${f.name} (${buf.length.toLocaleString()} bytes)`);
   }
   updateStart();
 };
@@ -323,6 +329,7 @@ $('btnAbort').onclick = async () => {
 };
 
 $('btnStart').onclick = async () => {
+  if (!fw || !ctrl || transferring) return;   // belt and braces
   transferring = true; abortReq = false; lastErr = ''; acked = 0; updateStart();
   $('result').textContent = ''; $('bar').style.width = '0';
   $('speed').textContent = $('eta').textContent = '';
