@@ -32,7 +32,7 @@
   .bar > div { height:100%; width:0; background:var(--bar); transition:width .2s; }
   .stat { display:flex; justify-content:space-between; font-size:13px; color:var(--muted); }
   .ok { color:var(--ok); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
-  #log { font:12px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space:pre-wrap;
+  #log, #devlog { font:12px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space:pre-wrap;
          max-height:220px; overflow:auto; margin:0; color:var(--muted); }
   .note { font-size:13px; color:var(--muted); margin:8px 0 0; }
 </style>
@@ -40,7 +40,7 @@
 <body>
 <main>
   <h1>BLE Firmware Test</h1>
-  <p class="sub">Bench test for sending firmware over Bluetooth. Not part of the RV Leveler app. · <b>Page v4</b></p>
+  <p class="sub">Bench test for sending firmware over Bluetooth. Not part of the RV Leveler app. · <b>Page v5</b></p>
 
   <div class="card">
     <h2>1 · Device</h2>
@@ -66,7 +66,16 @@
   </div>
 
   <div class="card">
-    <h2>Log</h2>
+    <h2>Device log</h2>
+    <p class="note" style="margin-top:0">Kept by the board across restarts, rollbacks and sleep. Fetched on every connect.</p>
+    <pre id="devlog"></pre>
+    <button id="btnDevLog" class="secondary" disabled>Fetch device log</button>
+    <button id="btnDownload">Download log file</button>
+    <button id="btnDevClear" class="secondary" disabled>Clear device log</button>
+  </div>
+
+  <div class="card">
+    <h2>Page log</h2>
     <pre id="log"></pre>
   </div>
 </main>
@@ -90,9 +99,54 @@ document.addEventListener('visibilitychange', () => {
   if (transferring) log(document.hidden ? 'Page went to BACKGROUND (screen off or app switch)' : 'Page back on screen');
 });
 
+const pageLog = [];               // chronological, for the download
+let devLog = [], devLogPending = [], devLogMeta = '', infoHistory = [];
+
 function log(msg) {
-  const t = new Date().toLocaleTimeString();
-  $('log').textContent = `${t}  ${msg}\n` + $('log').textContent;
+  const now = new Date();
+  pageLog.push(`${now.toISOString()}  ${msg}`);
+  $('log').textContent = `${now.toLocaleTimeString()}  ${msg}\n` + $('log').textContent;
+}
+
+function showDevLog() {
+  $('devlog').textContent = devLog.length ? devLog.join('\n') : '(empty — this build may not keep a log)';
+  $('devlog').scrollTop = $('devlog').scrollHeight;
+}
+
+async function fetchDevLog() {
+  if (!ctrl) return;
+  devLogPending = [];
+  const done = waitFor(s => s.startsWith('LOGEND|'), 15000);
+  await send('LOG');
+  await done.catch(() => log('No device log reply — this build may predate the device log'));
+}
+
+function downloadLog() {
+  const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
+  const parts = [
+    'BLE Firmware Test log — ' + new Date().toString(),
+    'Page: ' + document.querySelector('.sub b').textContent + ' | ' + navigator.userAgent,
+    '',
+    '== Device info (latest) ==',
+    ...Object.entries(lastInfo).map(([k, v]) => `${k}: ${v}`),
+    '',
+    '== Device info history ==',
+    ...infoHistory,
+    '',
+    '== Device log (' + devLogMeta + ') ==',
+    ...devLog,
+    '',
+    '== Page log ==',
+    ...pageLog,
+    ''
+  ];
+  const blob = new Blob([parts.join('\n')], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `ble-ota-log-${stamp}.txt`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  log('Log file saved: ' + a.download);
 }
 
 function showInfo(line) {
@@ -142,8 +196,15 @@ function onCtrl(ev) {
     progress();
     return;
   }
+  if (s.startsWith('LOG|')) { devLogPending.push(s.slice(4)); return; }
+  if (s.startsWith('LOGEND|')) {
+    const [, n, used, size] = s.split('|');
+    devLog = devLogPending; devLogPending = [];
+    devLogMeta = `${n} lines, ${used}/${size} bytes`;
+    showDevLog(); log(`Device log fetched: ${devLogMeta}`);
+  }
   log('← ' + s);
-  if (s.startsWith('INFO|')) showInfo(s);
+  if (s.startsWith('INFO|')) { showInfo(s); infoHistory.push(new Date().toISOString() + '  ' + s); }
   if (s.startsWith('ARMED')) setArmMsg('120s');
   if (waiter && waiter.match(s)) {
     clearTimeout(waiter.timer); const w = waiter; waiter = null; w.resolve(s);
@@ -176,6 +237,7 @@ async function connect() {
     device.addEventListener('gattserverdisconnected', () => {
       log('Disconnected'); ctrl = data = null; setArmMsg(null);
       $('btnInfo').disabled = true; $('btnConnect').textContent = 'Reconnect';
+      $('btnDevLog').disabled = $('btnDevClear').disabled = true;
       if (transferring) { abortReq = true; ackWaiters.splice(0).forEach(f => f()); }
       updateStart();
     });
@@ -192,12 +254,21 @@ async function attach() {
   await ctrl.startNotifications();
   ctrl.addEventListener('characteristicvaluechanged', onCtrl);
   $('btnInfo').disabled = false; $('btnConnect').textContent = 'Connected';
+  $('btnDevLog').disabled = $('btnDevClear').disabled = false;
   log('Connected');
   await new Promise(r => setTimeout(r, 600));   // let the MTU exchange settle
   const reply = waitFor(s => s.startsWith('INFO|'), 5000);
   await send('INFO');
   await reply.catch(e => log(e.message));
+  await fetchDevLog();
 }
+
+$('btnDevLog').onclick = () => fetchDevLog();
+$('btnDownload').onclick = () => downloadLog();
+$('btnDevClear').onclick = async () => {
+  if (!confirm('Clear the log stored on the board?')) return;
+  await send('LOGCLEAR'); await fetchDevLog();
+};
 
 $('btnConnect').onclick = async () => {
   if (device && !device.gatt.connected) { try { await attach(); } catch (e) { log('Reconnect failed: ' + e.message); } }
