@@ -82,6 +82,13 @@ let fw = null;                 // Uint8Array
 let waiter = null;             // pending reply {match, resolve, reject, timer}
 let acked = 0, ackWaiters = [], transferring = false, abortReq = false;
 let lastInfo = {}, lastErr = '';
+let lastIvl = '', lastTenth = 0, tenthBytes = 0, tenthTime = 0;
+
+// Android throttles pages that are not on screen — log it, because it
+// is a likely cause of a slow transfer.
+document.addEventListener('visibilitychange', () => {
+  if (transferring) log(document.hidden ? 'Page went to BACKGROUND (screen off or app switch)' : 'Page back on screen');
+});
 
 function log(msg) {
   const t = new Date().toLocaleTimeString();
@@ -94,7 +101,7 @@ function showInfo(line) {
   for (const p of parts) { const [k, v] = p.split('='); lastInfo[k] = v; }
   const label = { build:'Build', running:'Running slot', state:'Image state',
                   rolledBackFrom:'Rolled back from', slotSize:'Slot size',
-                  heap:'Free heap', mtu:'Link MTU', button:'Arm button', armed:'Armed',
+                  heap:'Free heap', mtu:'Link MTU', interval:'Conn. interval', button:'Arm button', armed:'Armed',
                   health:'Health check', sleepTest:'Sleep test' };
   $('info').innerHTML = Object.entries(lastInfo).map(([k, v]) => {
     let cls = '';
@@ -119,7 +126,18 @@ function setArmMsg(left) {
 function onCtrl(ev) {
   const s = new TextDecoder().decode(ev.target.value);
   if (s.startsWith('ACK|')) {
-    acked = parseInt(s.slice(4), 10);
+    const [, a, ivl] = s.split('|');
+    acked = parseInt(a, 10);
+    if (ivl && ivl !== lastIvl) { if (lastIvl) log(`Connection interval changed: ${lastIvl} → ${ivl}`); lastIvl = ivl; }
+    if (fw) {
+      const tenth = Math.floor(acked / fw.length * 10);
+      if (tenth > lastTenth) {
+        const now = performance.now();
+        const kbs = ((acked - tenthBytes) / 1024) / ((now - tenthTime) / 1000);
+        log(`${tenth * 10}%: ${kbs.toFixed(1)} kB/s over the last stretch, interval ${ivl || '?'}`);
+        lastTenth = tenth; tenthBytes = acked; tenthTime = now;
+      }
+    }
     ackWaiters.splice(0).forEach(f => f());
     progress();
     return;
@@ -242,11 +260,13 @@ $('btnStart').onclick = async () => {
     await send('BEGIN|' + fw.length);
     const r = await ready;
     if (r.startsWith('ERR|')) return finish(false, r.slice(4));
-    const [, chunkS, winS] = r.split('|');
+    const [, chunkS, winS, ivlS] = r.split('|');
     const chunk = +chunkS, win = +winS;
-    log(`Sending ${fw.length.toLocaleString()} bytes, ${chunk}-byte chunks, ${win}-byte window`);
+    lastIvl = ivlS || ''; lastTenth = 0; tenthBytes = 0;
+    log(`Sending ${fw.length.toLocaleString()} bytes, ${chunk}-byte chunks, ${win}-byte window` +
+        (ivlS ? `, interval ${ivlS}` : ''));
     const done = waitFor(s => s.startsWith('DONE|') || s.startsWith('ERR|'), 600000);
-    t0 = performance.now();
+    t0 = performance.now(); tenthTime = t0;
     let sent = 0;
     while (sent < fw.length) {
       if (abortReq) throw new Error(lastErr || (ctrl ? 'stopped' : 'disconnected'));
